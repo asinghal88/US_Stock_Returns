@@ -1,0 +1,490 @@
+---
+title: "US_Stock_Market"
+author: "Anshul Singhal"
+date: "10/1/2021"
+output: github_document
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+###Loading the Packages which are required
+```{r include = FALSE}
+library(dplyr)
+require(data.table)
+library(haven)
+library(zeallot)
+library(lubridate)
+library(plotly)
+library(openxlsx)
+library(readxl)
+library(zoo)
+library(scales)
+library(geckor)
+library(fredr)
+library(tidyquant)
+library(tidyr)
+library(naniar)
+library(tidyverse)
+fredr_set_key("669c24e3e2c8136b6db6b3c978104993")
+```
+
+###Relevant Functions used in the Code
+```{r}
+"Multiple Line chart Function to draw line chart across time with the Macro economic variables"
+plot_multiple_line_chart = function(dat1, title_type,y1_type,macro_flag = 0,type1 = "scatter") {
+  if(macro_flag == 0){
+    cols_taken = ncol(dat1)
+  }else{
+    cols_taken = ncol(dat1)-1
+  }
+  plot_y <- dat1 %>% plot_ly()
+  for(i in c(2:ncol(dat1))) {
+    if (i <= cols_taken) {
+      x = plot_y %>% add_trace(x = ~DATE_START, y=dat1[[i]],  mode="markers",marker = list(size = 3), type = type1, name=colnames(dat1)[i], yaxis='y1')
+    } else if(macro_flag != 0){
+      x = plot_y %>% add_trace(x = ~DATE_START, y=dat1[[i]], mode="markers", type = "scatter", name=colnames(dat1)[i], yaxis='y2') 
+    }
+    plot_y = x
+  }
+  if(macro_flag != 0)
+  {
+      plot_y %>% 
+      layout(title = paste0(title_type,"(LHS) vs Return (RHS)"),
+         barmode   = 'relative', 
+         xaxis     = list(title=''),
+         margin    = list(l = 75, r = 75, b = 50, t = 50, pad = 4),
+         xaxis     = list(title = ""),
+         yaxis     = list(side = 'left', 
+                       title = y1_type, 
+                       showgrid = FALSE, 
+                       zeroline = TRUE, 
+                       color = 'steelblue'),
+         yaxis2    = list(side = 'right', 
+                       overlaying = "y", 
+                       title = colnames(dat1)[ncol(dat1)], 
+                       showgrid = TRUE, 
+                       zeroline = FALSE,
+                       ticksuffix = "%",
+                       color = "#ffa500"),
+         legend = list(traceorder = 'reversed',orientation = "h"))
+  }
+  else{
+    plot_y %>% 
+    layout(title = paste0(title_type," Data"),
+       barmode   = 'relative', 
+       xaxis     = list(title='Month'),
+       margin    = list(l = 75, r = 75, b = 50, t = 50, pad = 4),
+       xaxis     = list(title = ""),
+       yaxis     = list(side = 'left', 
+                       title = y1_type, 
+                       showgrid = FALSE, 
+                       zeroline = TRUE, 
+                       color = 'steelblue'),
+       legend = list(traceorder = 'reversed',orientation = "h"))
+  }
+}
+"Plot Stacked Bar Chart over time"
+plot_stacked_chart = function(dat1,col_name,grouped_column,title_name,y_axis_name){
+  dat1["value"] = dat1[col_name]
+  dat1["Type"] = dat1[grouped_column]
+  stacked_plot = ggplot(dat1) +
+        geom_bar(aes(x=DATE_START,y=value,fill=Type),
+        stat='identity')+
+        theme_minimal() +
+        theme(plot.title = element_text(hjust = 0.5)) + 
+        labs(title = title_name, x = "Date", y = y_axis_name,color = "")
+  ggplotly(stacked_plot)
+}
+
+
+"Descriptive Stats Function : count, mean,p1,p5, p25, p50, p75,p95,p99, std,skewness,kurtosis max, min"
+stats = function(dat){
+count_group = dat %>%
+  summarise(across(everything(),funs(sum(!is.na(.))),.names = "count_{.col}"))
+mean_group = dat %>%
+  summarise(across(everything(), mean,na.rm = TRUE,.names = "mean_{.col}"))
+p1_group = dat %>%
+  summarise(across(everything(), quantile,probs = c(0.01),na.rm = TRUE,.names = "p01_{.col}"))
+p5_group = dat %>%
+  summarise(across(everything(), quantile,probs = c(0.05),na.rm = TRUE,.names = "p05_{.col}"))
+p25_group = dat %>%
+  summarise(across(everything(), quantile,probs = c(0.25),na.rm = TRUE,.names = "p25_{.col}"))
+p50_group = dat %>%
+  summarise(across(everything(), quantile,probs = c(0.5),na.rm = TRUE,.names = "p50_{.col}"))
+p75_group = dat %>%
+  summarise(across(everything(), quantile,probs = c(0.75),na.rm = TRUE,.names = "p75_{.col}"))
+p95_group = dat %>%
+  summarise(across(everything(), quantile,probs = c(0.95),na.rm = TRUE,.names = "p95_{.col}"))
+p99_group = dat %>%
+  summarise(across(everything(), quantile,probs = c(0.99),na.rm = TRUE,.names = "p95_{.col}"))
+std_group = dat %>%
+  summarise(across(everything(), sd,na.rm = TRUE,.names = "std_{.col}"))
+skewness_group = dat %>%
+  summarise(across(everything(), skewness, na.rm = TRUE,.names = "skew_{.col}"))
+kurtosis_group = dat %>%
+  summarise(across(everything(),kurtosis, na.rm = TRUE,.names = "kurt_{.col}"))
+max_group = dat %>%
+  replace(is.na(.), 0)%>%
+  summarise(across(everything(),max,.names = "max_{.col}"))
+min_group = dat %>%
+  replace(is.na(.), 0)%>%
+  summarise(across(everything(), min,.names = "min_{.col}"))
+ return (list(count_group,mean_group,p1_group, p5_group, p25_group,p50_group, p75_group,p95_group,p99_group, std_group,skewness_group,kurtosis_group,max_group,min_group))
+}
+
+```
+
+###Reading the Monthly Data and Name Mappings/Industry/Exchange (MSF New & Msenames)
+```{r}
+path = ""
+mse_names = read.csv(paste0(path,"msenames.csv"))
+monthly_data = fread(paste0(path,"msf_new2.csv"))
+monthly_data = monthly_data%>%
+  tibble()
+```
+
+##Getting industry and Exchange Mapping and Deflating to 2010 Dollar Terms
+```{r}
+mse_names_unique = mse_names%>%
+  distinct(CUSIP,.keep_all= TRUE)
+
+monthly_data_modified = monthly_data%>%
+  merge(mse_names_unique[c("CUSIP","COMNAM","EXCHCD","SICCD")],by = "CUSIP",all.x = TRUE)%>%
+  arrange(CUSIP,DATE)%>%
+  drop_na(PRC)%>%
+  filter(SHRCD %in% c(10,11))%>%
+  mutate(DATE = as.Date(parse_date_time(DATE, orders = "Ymd")),MKTCAP = abs(PRC*SHROUT))
+
+cpi_deflator <- 
+   "CPIAUCNS" %>% 
+  tq_get(get = "economic.data", from = "1925-01-01") %>% 
+  select(DATE_START = date, INDEX  =  price)
+cpi_deflator = cpi_deflator%>%
+  mutate(MULT = cpi_deflator$INDEX[cpi_deflator$DATE_START == "2010-12-01"]/INDEX)
+
+monthly_data_modified = monthly_data_modified%>%
+  mutate(DATE_START = floor_date(DATE, unit = "month"))%>%
+  merge(cpi_deflator[c("DATE_START","MULT")],by = "DATE_START",all.x = TRUE)%>%
+mutate(MKTCAP_ADJ = MKTCAP*MULT,CATEGORY = if_else(EXCHCD %in% c(1,31),"NYSE",if_else(EXCHCD %in% c(2,32),"NYSE MKT",if_else(EXCHCD %in% c(3,33),"NASDAQ",if_else(EXCHCD %in% c(4,34),"ARCA","OTHER EXCHANGE")))))
+
+
+```
+
+##Count and Mean Plots for the Exchange wise Stocks over time(1925-2020)
+```{r}
+#Calculating the count and mean market cap
+count_ticker = monthly_data_modified %>%
+  group_by(CATEGORY,DATE_START)%>%
+  summarise(across(c("CUSIP"),funs(sum(!is.na(.))),.names = "count_{.col}"))
+
+mean_mcap = monthly_data_modified %>%
+  group_by(CATEGORY,DATE_START)%>%
+  summarise(across(c("MKTCAP_ADJ"), mean,na.rm = TRUE,.names = "mean_{.col}"))
+
+#Stacked Bar chart plot
+plot_stacked_chart(count_ticker,"count_CUSIP","CATEGORY","Total Stocks From 1925 Onwards By Exchange","Count")
+plot_stacked_chart(mean_mcap,"mean_MKTCAP_ADJ","CATEGORY","Mean Overall Market Cap From 1925 Onwards By Exchange","Market Cap ($)")
+
+
+```
+
+##Count and Mean Plots for the Industry wise Stocks over time(1925-2020)
+```{r}
+##industry wise Plots and Analysis
+#Mapping the industry
+monthly_data_modified = monthly_data_modified%>%
+  mutate(INDUSTRY = if_else(SICCD %in% c(1:999),"Agriculture, Forestry and Fishing",if_else(SICCD %in% c(1000:1499),"Mining",if_else(SICCD %in% c(1500:1799),"Construction",if_else(SICCD %in% c(2000:3999),"Manufacturing",if_else(SICCD %in% c(4000:4999),"Transportation and other Utilities",if_else(SICCD %in% c(5000:5199),"Wholesale Trade",if_else(SICCD %in% c(5200:5999),"Retail Trade",if_else(SICCD %in% c(6000:6799),"Finance, Insurance and Real Estate",if_else(SICCD %in% c(7000:8999),"Services",if_else(SICCD %in% c(9000:9999),"Public Administration","Others")))))))))))
+
+#Calculating the count and mean market cap
+count_ticker_industry = monthly_data_modified %>%
+  group_by(INDUSTRY,DATE_START)%>%
+  summarise(across(c("CUSIP"),funs(sum(!is.na(.))),.names = "count_{.col}"))
+
+mean_mcap_industry = monthly_data_modified %>%
+  group_by(INDUSTRY,DATE_START)%>%
+  summarise(across(c("MKTCAP_ADJ"), mean,na.rm = TRUE,.names = "mean_{.col}"))
+
+#Stacked Bar chart plot
+plot_stacked_chart(count_ticker_industry,"count_CUSIP","INDUSTRY","Total Stocks From 1925 Onwards By Industry","Count")
+plot_stacked_chart(mean_mcap_industry,"mean_MKTCAP_ADJ","INDUSTRY","Mean Overall Market Cap From 1925 Onwards By Industry","Market Cap ($)")
+
+
+```
+
+##Reading the FAMA FRENCH Risk Free Rate Data (RF)
+```{r}
+#Downloading and Reading the data
+risk_free_data = read.csv("F-F_Research_Data_Factors.csv",skip = 2)
+names(risk_free_data)[1] = "DATE_START"
+risk_free_data = risk_free_data%>%
+  mutate(DATE_START = as.Date(parse_date_time(DATE_START, orders = "Ym")))%>%
+  mutate_if(is.character, as.numeric)
+
+monthly_data_modified_risk_free = monthly_data_modified%>%
+  merge(risk_free_data[c("DATE_START","RF")],by = "DATE_START")%>%
+  arrange(CUSIP,DATE_START)
+monthly_data_modified_risk_free = monthly_data_modified_risk_free[monthly_data_modified_risk_free$RET!="C",]
+
+#calculating the excess returns over RF
+monthly_data_modified_risk_free = monthly_data_modified_risk_free%>%
+  mutate(across(c(RET),as.numeric),EXCESS_RETURN = RET - RF/100)
+
+
+#Descriptive stats
+c(count_monthly_data,mean_monthly_data,p1_monthly_data,p5_monthly_data,p25_monthly_data,p50_monthly_data, p75_monthly_data,p95_monthly_data,p99_monthly_data, std_monthly_data,skew_monthly_data,kurt_monthly_data,max_monthly_data,min_monthly_data)%<-%stats(monthly_data_modified_risk_free[c("PRC","ASKHI","BIDLO","BID","ASK","VOL","RET","SHROUT","CFACPR","CFACSHR","VWRETD","MKTCAP_ADJ","RF")])
+
+#Descriptive stats from 1963 Onwards
+c(count_monthly_data_1963,mean_monthly_data_1963,p1_monthly_data_1963,p5_monthly_data_1963,p25_monthly_data_1963,p50_monthly_data_1963, p75_monthly_data_1963,p95_monthly_data_1963,p99_monthly_data_1963, std_monthly_data_1963,skew_monthly_data_1963,kurt_monthly_data_1963,max_monthly_data_1963,min_monthly_data_1963)%<-%stats(monthly_data_modified_risk_free[monthly_data_modified_risk_free$DATE_START>="1963-01-01",c("PRC","ASKHI","BIDLO","BID","ASK","VOL","RET","SHROUT","CFACPR","CFACSHR","VWRETD","MKTCAP_ADJ","RF")])
+
+mean_1925 = monthly_data_modified_risk_free %>%
+  select(c("DATE_START","PRC","ASKHI","BIDLO","BID","ASK","VOL","RET","SHROUT","CFACPR","CFACSHR","VWRETD","MKTCAP_ADJ","RF"))%>%
+  group_by(DATE_START)%>%
+  mutate(RET = 100*RET,VWRETD = 100*VWRETD)%>%
+  summarise(across(everything(), mean,na.rm = TRUE,.names = "mean_{.col}"))
+
+std_1925 = monthly_data_modified_risk_free %>%
+  select(c("DATE_START","PRC","ASKHI","BIDLO","BID","ASK","VOL","RET","SHROUT","CFACPR","CFACSHR","VWRETD","MKTCAP_ADJ","RF"))%>%
+  group_by(DATE_START)%>%
+  mutate(RET = 100*RET,VWRETD = 100*VWRETD)%>%
+  summarise(across(everything(), sd,na.rm = TRUE,.names = "std_{.col}"))
+
+#Plotting the dot plots for the mean and std monthly frequency data
+plot_multiple_line_chart(mean_1925,"Mean of Variables from 1925 Onwards","$ / % for Returns")
+plot_multiple_line_chart(std_1925,"Std Deviation of Variables from 1925 Onwards","$ / % for Returns")
+
+```
+
+##Excess Market Returns/Premium over Market Portfolio Analysis
+```{r}
+monthly_data_modified_risk_free = monthly_data_modified_risk_free%>%
+  mutate(EXCESS_RETURN_MKT_PF = RET - VWRETD,Log_EXCESS_MKT_PF = log(1+EXCESS_RETURN_MKT_PF))
+
+
+#Descriptive stats
+c(count_monthly_data_mkt,mean_monthly_data_mkt,p1_monthly_data_mkt,p5_monthly_data_mkt,p25_monthly_data_mkt,p50_monthly_data_mkt, p75_monthly_data_mkt,p95_monthly_data_mkt,p99_monthly_data_mkt, std_monthly_data_mkt,skew_monthly_data_mkt,kurt_monthly_data_mkt,max_monthly_data_mkt,min_monthly_data_mkt)%<-%stats(monthly_data_modified_risk_free[c("EXCESS_RETURN_MKT_PF","Log_EXCESS_MKT_PF")])
+
+#Descriptive stats from 1963 Onwards
+c(count_monthly_data_mkt_1963,mean_monthly_data_mkt_1963,p1_monthly_data_mkt_1963,p5_monthly_data_mkt_1963,p25_monthly_data_mkt_1963,p50_monthly_data_mkt_1963, p75_monthly_data_mkt_1963,p95_monthly_data_mkt_1963,p99_monthly_data_mkt_1963, std_monthly_data_mkt_1963,skew_monthly_data_mkt_1963,kurt_monthly_data_mtk_1963,max_monthly_data_mkt_1963,min_monthly_data_mkt_1963)%<-%stats(monthly_data_modified_risk_free[monthly_data_modified_risk_free$DATE_START>="1963-01-01",c("EXCESS_RETURN_MKT_PF","Log_EXCESS_MKT_PF")])
+
+mean_mkt_1925 = monthly_data_modified_risk_free %>%
+  select(c("DATE_START","EXCESS_RETURN_MKT_PF","Log_EXCESS_MKT_PF"))%>%
+  group_by(DATE_START)%>%
+  mutate(EXCESS_RETURN_MKT_PF = 100*EXCESS_RETURN_MKT_PF, Log_EXCESS_MKT_PF = 100*Log_EXCESS_MKT_PF)%>%
+  summarise(across(everything(), mean,na.rm = TRUE,.names = "mean_{.col}"))
+
+std_mkt_1925 = monthly_data_modified_risk_free %>%
+  select(c("DATE_START","EXCESS_RETURN_MKT_PF","Log_EXCESS_MKT_PF"))%>%
+  group_by(DATE_START)%>%
+  mutate(EXCESS_RETURN_MKT_PF = 100*EXCESS_RETURN_MKT_PF, Log_EXCESS_MKT_PF = 100*Log_EXCESS_MKT_PF)%>%
+  summarise(across(everything(), sd,na.rm = TRUE,.names = "std_{.col}"))
+
+
+plot_multiple_line_chart(mean_mkt_1925,"Mean of Excess Returns wrt Value Weighted Market Portfolio  from 1925 Onwards","%")
+plot_multiple_line_chart(std_mkt_1925,"Std Deviation of Excess Returns wrt Value Weighted Market Portfolio from 1925 Onwards","%")
+
+cumulative_excess_returns_data_monthly = monthly_data_modified_risk_free%>%
+  arrange(CUSIP,DATE_START)%>%
+  select(c("DATE_START","CUSIP","EXCESS_RETURN","EXCESS_RETURN_MKT_PF","Log_EXCESS_MKT_PF"))%>%
+  group_by(CUSIP)%>%
+  drop_na(EXCESS_RETURN,EXCESS_RETURN_MKT_PF,Log_EXCESS_MKT_PF)%>%
+  mutate(COMP_EXCESS_RET = CUMULATIVE_PRODUCT(1+EXCESS_RETURN),COMP_MKT_EXCESS_RET =  CUMULATIVE_PRODUCT(1+EXCESS_RETURN_MKT_PF),CUM_MKT_LOG_EXCESS_RET = CUMULATIVE_SUM(Log_EXCESS_MKT_PF))
+#Comparitive study for both time period 1925-2020 and 1963-2020
+final_cumulative_data = cumulative_excess_returns_data_monthly%>%
+  group_by(CUSIP)%>%
+  slice(n())
+
+final_cumulative_data_1963 = cumulative_excess_returns_data_monthly%>%
+  filter(DATE_START >= "1963-01-01")%>%
+  group_by(CUSIP)%>%
+  slice(1,n())%>%
+  mutate(COMP_EXCESS_RET = (COMP_EXCESS_RET/lag(COMP_EXCESS_RET)-1),COMP_MKT_EXCESS_RET = (COMP_MKT_EXCESS_RET/lag(COMP_MKT_EXCESS_RET)-1),CUM_MKT_LOG_EXCESS_RET = (CUM_MKT_LOG_EXCESS_RET/lag(CUM_MKT_LOG_EXCESS_RET)-1))%>%
+  drop_na()
+
+
+#Descriptive stats
+c(count_cumulative,mean_cumulative,p1_cumulative,p5_cumulative,p25_cumulative,p50_cumulative, p75_cumulative,p95_cumulative,p99_cumulative, std_cumulative,skew_cumulative,kurt_cumulative,max_cumulative,min_cumulative)%<-%stats(final_cumulative_data[c("COMP_EXCESS_RET","COMP_MKT_EXCESS_RET","CUM_MKT_LOG_EXCESS_RET")])
+
+#Descriptive stats from 1963 Onwards
+c(count_cumulative_1963,mean_cumulative_1963,p1_cumulative_1963,p5_cumulative_1963,p25_cumulative_1963,p50_cumulative_1963, p75_cumulative_1963,p95_cumulative_1963,p99_cumulative_1963, std_cumulative_1963,skew_cumulative_1963,kurt_cumulative_1963,max_cumulative_1963,min_cumulative_1963)%<-%stats(final_cumulative_data_1963[c("COMP_EXCESS_RET","COMP_MKT_EXCESS_RET","CUM_MKT_LOG_EXCESS_RET")])
+
+
+mean_cumulative_1925 = cumulative_excess_returns_data_monthly %>%
+  ungroup() %>%
+  select(c("DATE_START","COMP_EXCESS_RET","COMP_MKT_EXCESS_RET","CUM_MKT_LOG_EXCESS_RET"))%>%
+  group_by(DATE_START)%>%
+  mutate(COMP_EXCESS_RET = 100*COMP_EXCESS_RET,COMP_MKT_EXCESS_RET = 100*COMP_MKT_EXCESS_RET,CUM_MKT_LOG_EXCESS_RET = 100*CUM_MKT_LOG_EXCESS_RET)%>%
+  summarise(across(everything(), mean,na.rm = TRUE,.names = "mean_{.col}"))
+
+std_cumulative_1925 = cumulative_excess_returns_data_monthly %>%
+  ungroup() %>%
+  select(c("DATE_START","COMP_EXCESS_RET","COMP_MKT_EXCESS_RET","CUM_MKT_LOG_EXCESS_RET"))%>%
+  group_by(DATE_START)%>%
+  mutate(COMP_EXCESS_RET = 100*COMP_EXCESS_RET,COMP_MKT_EXCESS_RET = 100*COMP_MKT_EXCESS_RET,CUM_MKT_LOG_EXCESS_RET = 100*CUM_MKT_LOG_EXCESS_RET)%>%
+  summarise(across(everything(), sd,na.rm = TRUE,.names = "std_{.col}"))
+
+
+plot_multiple_line_chart(mean_cumulative_1925,"Mean of Cumulative Excess Returns from 1925 Onwards","%")
+plot_multiple_line_chart(std_cumulative_1925,"Std Deviation of Cumulative Excess Returns from 1925 Onwards","%")
+```
+
+
+
+###Reading the Daily Data (DSF NEW)
+```{r}
+##Removing old variables to free up memory
+rm(list = setdiff(ls(), lsf.str()))
+path = "dsf_new.csv"
+daily_data <- fread(path, select=c('DATE','CUSIP','PRC', 'VOL', 'RET','BID', 'ASK','ASKHI','BIDLO','OPENPRC','SHROUT','VWRETD'))
+
+```
+
+## Daily Data Modification, Plots for Return, Spread
+```{r}
+#Data Cleaning done 
+daily_data <- daily_data %>%
+            tibble()%>%
+            mutate(RET = as.numeric(RET),PRC = abs(PRC),DATE =   as.Date(parse_date_time(DATE, orders = "Ymd")))%>%
+  rename(DATE_START = DATE)
+
+# New Variables creation
+daily_data <- daily_data %>%
+                  mutate(SPREAD = ASK - BID,
+                         RANGE = ASKHI-BIDLO,
+                         OPEN_CLOSE_SPREAD = PRC-OPENPRC)
+
+#Descriptive Stats Calculation for overall time
+c(count_daily_data,mean_daily_data,p1_daily_data,p5_daily_data,p25_daily_data,p50_daily_data, p75_daily_data,p95_daily_data,p99_daily_data, std_daily_data,skew_daily_data,kurt_daily_data,max_daily_data,min_daily_data)%<-%stats(daily_data[c("SPREAD","RANGE","OPEN_CLOSE_SPREAD","RET")])
+
+#Mean calculation of the variables monthly frequency
+mean_daily_data = daily_data %>%
+  group_by(DATE_START)%>%
+  mutate(RET = 100*RET)%>%
+  summarise(across(c("SPREAD","RANGE","OPEN_CLOSE_SPREAD","RET"), mean,na.rm = TRUE,.names = "mean_{.col}"))
+#Plotting the data
+plot_multiple_line_chart(mean_daily_data,"Spread and Return","$ / % for Daily Returns")
+
+```
+
+## IPOs monthly plots Market Size and Retuns
+```{r}
+ipo_data <- daily_data %>% select(c('DATE_START', 'CUSIP', 'RET', 'VWRETD', 'PRC', 'SHROUT'))
+rm(daily_data)
+
+# Storing the data 
+monthly_market_data <- ipo_data %>%
+            select(c('DATE_START','VWRETD')) %>% 
+            mutate(VWRETD = VWRETD + 1) %>%
+            arrange(DATE_START) %>%
+            distinct(DATE_START, .keep_all = TRUE) %>%
+            mutate(DATE_START = floor_date(DATE_START, unit = "month")) %>%
+            group_by(DATE_START) %>%
+            mutate(VWRETD = cumprod(VWRETD)) %>% 
+            slice(n())
+#Creating the variables for the data (Yearly, monthly data)
+monthly_market_data <- monthly_market_data %>% 
+            ungroup()%>%
+            mutate(CUM_RATE = CUMULATIVE_PRODUCT(VWRETD)) %>%
+            mutate(YEARLY_MARKET_RET = LEAD(CUM_RATE,12)/CUM_RATE,
+                  BY_YEARLY_MARKET_RET = LEAD(CUM_RATE,24)/CUM_RATE,
+                  TRI_YEARLY_MARKET_RET = LEAD(CUM_RATE,36)/CUM_RATE) %>%
+            rename(MONTHLY_RETURN = VWRETD)
+# IPO CUSIPS Storing
+ipo_date <- ipo_data %>% 
+            select(c('DATE_START', 'CUSIP','RET')) %>%
+            drop_na(RET) %>%
+            select(-RET) %>%
+            group_by(CUSIP) %>% 
+            summarise(across(everything(), min, na.rm = TRUE)) %>% 
+            inner_join(ipo_data, by = c("DATE_START", "CUSIP")) %>%
+            select(c('DATE_START', 'CUSIP','RET', 'PRC','SHROUT')) %>%
+            mutate(MARKET_CAP = PRC*SHROUT)
+            
+            
+# Count of the IPOS
+monthly_ipo <- ipo_date %>%
+            filter((DATE_START!="1972-12-15") & (DATE_START!="1962-12-31"))%>%
+            mutate(DATE_START = floor_date(DATE_START, unit = "month")) %>%
+            group_by(DATE_START) %>%
+            count() %>%
+            inner_join(monthly_market_data %>% select(c('DATE_START','MONTHLY_RETURN')))
+
+#Calculating the returns of the IPOs            
+monthly_ipo = monthly_ipo%>%
+  mutate(MONTHLY_RETURN = (MONTHLY_RETURN-1)*100)%>%
+  rename(IPO_COUNT =  n)
+
+#Line chart for the IPOs
+plot_multiple_line_chart(monthly_ipo,"Monthly IPOs","Count",1,"bar")
+
+monthly_ipo_size <- ipo_date %>%
+                filter((DATE_START!="1972-12-15") & (DATE_START!="1962-12-31"))%>%
+                select(c('DATE_START', 'MARKET_CAP')) %>% 
+                mutate(DATE_START = floor_date(DATE_START, unit = "month")) %>%
+                group_by(DATE_START) %>%
+                summarise(across(everything(), mean, na.rm = TRUE)) %>% 
+                inner_join(monthly_market_data %>% select(c('DATE_START','MONTHLY_RETURN')))
+
+ipo_sz_monthly = monthly_ipo_size%>%
+  mutate(MONTHLY_RETURN = (MONTHLY_RETURN-1)*100)
+#Plot the Mean IPO size against the return 
+plot_multiple_line_chart(ipo_sz_monthly,"Mean IPO Sizes per month","Size ($)",1)
+#Calculating first day return for the IPO
+monthly_first_day_return <- ipo_date %>%
+                select(c('DATE_START','RET')) %>%
+                 mutate(DATE_START = floor_date(DATE_START, unit = "month")) %>%
+                group_by(DATE_START) %>%
+                summarise(across(everything(), mean, na.rm = TRUE)) %>%
+                inner_join(monthly_market_data %>% select(c('DATE_START','MONTHLY_RETURN')))
+```
+
+##IPO Data Analysis Excess Returns Market Portfolio
+```{r}
+
+#Taking all data for the IPO
+all_ipo_data <- ipo_date %>% 
+            select(c('DATE_START','CUSIP', 'PRC','RET')) %>%
+            rename(IPO_DATE = DATE_START, IPO_PRC = PRC) %>%
+            inner_join(ipo_data %>% select('DATE_START','CUSIP', 'PRC','VWRETD')) %>%
+            mutate(DIFF = difftime(DATE_START,IPO_DATE,units="weeks")) %>%
+            filter(DIFF == 0 | DIFF == 4 | DIFF == 52 | DIFF == 104 | DIFF == 156) %>%
+            mutate(IPO_RET = ifelse(DIFF == 0, RET, (PRC-IPO_PRC)/IPO_PRC ) ) %>%
+            select(c('CUSIP','DIFF','IPO_RET')) %>%
+            pivot_wider(names_from = DIFF, values_from = IPO_RET) %>%
+            rename( FIRST_DAY_RET = '0',
+                    FIRST_MONTH_RET = '4',
+                    FIRST_YEAR_MONTH = '52',
+                    TWO_YEAR_RETURN = '104',
+                    THREE_YEAR_RETURN = '156') %>%
+            inner_join(ipo_date) %>%
+            mutate(DATE_START = floor_date(DATE_START, unit = "month")) %>%
+            group_by(DATE_START) %>%
+            summarise(across(.cols = is.numeric, mean, na.rm = TRUE))
+
+#Removing the IPO data(excess variables)so to free up memory space
+rm(ipo_data)
+#Calculating the ipo excess returns
+ipo_excess_returns <- all_ipo_data %>% 
+                       inner_join(monthly_market_data) %>%
+                       mutate(FIRST_MONTH_EXCESS = FIRST_MONTH_RET - MONTHLY_RETURN,
+                              FIRST_YEAR_EXCESS = FIRST_YEAR_MONTH - YEARLY_MARKET_RET,
+                              TWO_YEAR_EXCESS = TWO_YEAR_RETURN - BY_YEARLY_MARKET_RET,
+                              THREE_YEAR_EXCESS = THREE_YEAR_RETURN - TRI_YEARLY_MARKET_RET) %>%
+                       select(DATE_START, FIRST_DAY_RET, FIRST_MONTH_EXCESS, FIRST_YEAR_EXCESS, TWO_YEAR_EXCESS, THREE_YEAR_EXCESS)
+ 
+#Descriptive stats for the excess return for the IPO
+c(count_ipo_excess_returns,mean_ipo_excess_returns,p1_ipo_excess_returns,p5_ipo_excess_returns,p25_ipo_excess_returns,p50_ipo_excess_returns, p75_ipo_excess_returns,p95_ipo_excess_returns,p99_ipo_excess_return, std_ipo_excess_return,skew_ipo_excess_return,kurt_ipo_excess_return,max_ipo_excess_return,min_ipo_excess_return)%<-%stats(ipo_excess_returns[,names(ipo_excess_returns)!="DATE_START"])
+
+#Multiply by 100 for the IPO Excess Returns Columns
+ipo_excess_returns[,2:ncol(ipo_excess_returns)] = ipo_excess_returns[,2:ncol(ipo_excess_returns)]*100
+#Calculating mean and std for the variables(excess returns) over time (monthly frequency)
+mean_ipo_excess_returns_1963 = ipo_excess_returns %>%
+  group_by(DATE_START)%>%
+  summarise(across(everything(), mean,na.rm = TRUE,.names = "mean_{.col}"))
+
+std_ipo_excess_returns_1963 = ipo_excess_returns %>%
+  group_by(DATE_START)%>%
+  summarise(across(everything(), sd,na.rm = TRUE,.names = "std_{.col}"))
+
+```
